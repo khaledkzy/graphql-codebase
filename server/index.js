@@ -1,25 +1,42 @@
 const { ApolloServer, gql } = require('apollo-server');
+
+
 const MongoClient = require('mongodb').MongoClient;
 const assert = require('assert');
+let mongo
 
-// Connection URL
-const url = 'mongodb://localhost:27017';
+async function context(){
+    if(!mongo){
+        mongo = await MongoClient.connect('mongodb://localhost:27017/myproject')
+        mongo = mongo.db('myproject')
+    }
+    return { mongo }
+}
 
-// Database Name
-const dbName = 'myproject';
 
-// Create a new MongoClient
-const client = new MongoClient(url);
+// // Connection URL
+// const url = 'mongodb://localhost:27017';
+
+// // Database Name
+// const dbName = 'myproject';
+
+// // Create a new MongoClient
+// const client = new MongoClient(url);
 
 // Use connect method to connect to the Server
-client.connect(function(err) {
-  assert.equal(null, err);
-  console.log("Connected successfully to server - LOCAL MONGODB");
+// async function context() {
+// client.connect(function(err) {
+//   assert.equal(null, err);
+//   console.log(err)
+//   console.log("Connected successfully to server - LOCAL MONGODB");
+//   const db = client.db(dbName);
+//   console.log( db.collection('books'))
+//   client.close();
+// });
+// }
 
-  const db = client.db(dbName);
 
-  client.close();
-});
+
 
 
 // const mongoose = require('mongoose');
@@ -39,19 +56,19 @@ client.connect(function(err) {
 // This is a (sample) collection of books we'll be able to query
 // the GraphQL server for.  A more complete example might fetch
 // from an existing data source like a REST API or database.
-const booksObj = [
-    {
-        title: 'Harry Potter and the Chamber of Secrets',
-        authorId: 1,
-        movieId: 1
+// const booksObj = [
+//     {
+//         title: 'Harry Potter and the Chamber of Secrets',
+//         authorId: 1,
+//         movieId: 1
 
-    },
-    {
-        title: 'Jurassic Park',
-        authorId: 2,
-        movieId: 2
-    },
-];
+//     },
+//     {
+//         title: 'Jurassic Park',
+//         authorId: 2,
+//         movieId: 2
+//     },
+// ];
 
 const authorsObj = [
     {
@@ -64,16 +81,17 @@ const authorsObj = [
     }
 ];
 
-const moviesObj = [
-    {
-        name: 'Harry Potter and the Chamber of Secrets - Movie',
-        id: 1
-    },
-    {
-        name: 'Jurassic Park - Movie',
-        id: 2
-    }
-];
+// const moviesObj = [
+//     {
+//         name: 'Harry Potter and the Chamber of Secrets - Movie',
+//         id: 1
+//     },
+//     {
+//         name: 'Jurassic Park - Movie',
+//         id: 2
+//     }
+// ];
+
 
 // Type definitions define the "shape" of your data and specify
 // which ways the data can be fetched from the GraphQL server.
@@ -85,7 +103,9 @@ const typeDefs = gql`
     title: String
     author: AuthorType
     movie: MovieType
+    _id: String
   }
+
   type AuthorType {
     name: String
     book: BookType
@@ -95,12 +115,18 @@ const typeDefs = gql`
     book: BookType
   }
 
+
   # The "Query" type is the root of all GraphQL queries.
   # (A "Mutation" type will be covered later on.)
   type Query {
     books: [BookType]
     authors: [AuthorType]
     movies : [MovieType]
+    booksConst: [BookType]
+    book(_id: String): BookType
+  }
+  type Mutation {
+      addBook(title: String!, authorId: Int!): BookType
   }
 `;
 
@@ -108,26 +134,55 @@ const typeDefs = gql`
 // schema.  We'll retrieve books from the "books" array above.
 const resolvers = {
     Query: {
-        books: function () {
+        booksConst: function () {
             return booksObj
         },
+        books: async (parent, args, context) => {
+
+            return await context.mongo.collection('books').find().toArray()
+        },
+        book: async (parent, args, context) => {
+            // {
+            //     book(_id: "5c5ace5d85102055117976e6"){
+            //       title
+            //     }
+            //   }
+            // console.log(args)
+
+           return await context.mongo.collection('books').findOne(args.id)
+        },
         // books: () => booksObj,
-        authors: () => authorsObj,
-        movies: () => moviesObj
+        authors:  async (parent, args, context) => await context.mongo.collection('author').find().toArray(),
+        movies: async (parent, args, context) => await context.mongo.collection('movies').find().toArray(),
+    },
+    Mutation:{
+        addBook: async (parent,args,context) => {
+            // mutation{
+            //     addBook(title: "googlex", authorId: 1){
+            //   title
+            //     }
+            //   }
+            console.log(args)
+            const { title , authorId } = args
+        const response =    await context.mongo.collection('books').insertOne({title,authorId})
+        console.log(response)
+            return response.ops[0]
+        }
     },
     BookType: {
         // parent will be Book
         // SO it will go to the
-        author: (parent) => {
-            return authorsObj.find((author) => author.id === parent.authorId)
+        author: async (parent, args, context) => {
+            return await context.mongo.collection('authors').findOne({id: parent.authorId})
         },
-        movie: (parent) => {
-            return moviesObj.find((movie) => movie.id === parent.movieId)
+        movie: async (parent, args, context) => {
+            return await context.mongo.collection('movies').findOne({id: parent.movieId})
         }
     },
     AuthorType: {
         book: (parent) => {
-            return booksObj.find((book) => book.authorId === parent.id)
+            console.log(parent)
+            return async (parent, args, context) => await context.mongo.collection('books').find().toArray().find((book) => book.authorId === parent.id)
         }
     },
 };
@@ -135,7 +190,7 @@ const resolvers = {
 // In the most basic sense, the ApolloServer can be started
 // by passing type definitions (typeDefs) and the resolvers
 // responsible for fetching the data for those types.
-const server = new ApolloServer({ typeDefs, resolvers });
+const server = new ApolloServer({ typeDefs, resolvers, context });
 
 // This `listen` method launches a web-server.  Existing apps
 // can utilize middleware options, which we'll discuss later.
